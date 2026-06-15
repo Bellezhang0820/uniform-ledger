@@ -240,13 +240,44 @@ def parse_text(raw_text: str) -> dict:
     parsed: list[dict] = []
     errors: list[str] = []
     lines = [line.strip() for line in (raw_text or "").splitlines()]
-    for idx, line in enumerate(lines):
+
+    # Pre-process: merge consecutive size-only lines + "各N件" into a single line
+    # e.g. "180\n185\n各3套" → "180 185 各3套"
+    # Also: "180 185\n各3套" → "180 185 各3套"
+    merged = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not line:
+            i += 1
+            continue
+        # Check if this line contains one or more sizes followed by a "各" line
+        sizes = re.findall(SIZE_RE, line)
+        if sizes:
+            j = i + 1
+            # Collect more size-only lines
+            while j < len(lines) and re.fullmatch(rf"{SIZE_RE}", lines[j]):
+                sizes.append(lines[j])
+                j += 1
+            if j < len(lines) and re.match(r"各\s*\d+\s*(件|条|套)?", lines[j]):
+                merged.append(" ".join(sizes) + " " + lines[j])
+                i = j + 1
+                continue
+            # If same line has 2+ sizes, check if there's a "各" on the next line
+            if len(sizes) >= 2 and j < len(lines) and re.match(r"各\s*\d+\s*(件|条|套)?", lines[j]):
+                merged.append(" ".join(sizes) + " " + lines[j])
+                i = j + 1
+                continue
+        merged.append(line)
+        i += 1
+
+    for idx, line in enumerate(merged):
         if not line:
             continue
         if "以此为准" in line:
             context.final_override = True
             line = line.replace("以此为准", "")
-        next_line = next((candidate for candidate in lines[idx + 1:] if candidate), "")
+        next_line = next((candidate for candidate in merged[idx + 1:] if candidate), "")
         if _is_total_header(line, next_line, context):
             qty_pos = re.search(r"\d+\s*(件|条|套)$", line).start()
             _update_context(context, normalize_category(line[:qty_pos], context))
